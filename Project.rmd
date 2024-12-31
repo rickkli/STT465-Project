@@ -1,0 +1,204 @@
+---
+title: "STT465 Project"
+output: html_document
+date: "2024-11-21"
+---
+
+```{r}
+library(faraway)
+library(ggplot2)
+```
+
+```{r}
+gavote$undercount <- (gavote$ballots - gavote$votes) / gavote$ballots
+gavote
+```
+
+```{r}
+cor_matrix <- cor(gavote[, sapply(gavote, is.numeric)])
+corrplot(cor_matrix, method = "circle")
+```
+
+```{r}
+ggplot(gavote, aes(x = equip, fill = factor(gore > bush))) +
+  geom_bar() +
+  labs(title = "Vote Outcomes by Equipment Type", x = "Equipment", y = "Count", 
+       fill = "Gore Wins (1 = Yes)")
+```
+
+```{r}
+ggplot(gavote, aes(x = factor(rural), fill = econ)) +
+  geom_bar(position = "fill") +
+  labs(title = "Economic Status by Rural/Urban Areas", x = "Rural (0) or Urban (1)", y = "Proportion") +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+```{r}
+ggplot(gavote, aes(x = perAA)) +
+  geom_histogram(binwidth = 0.05, fill = "skyblue", color = "black") +
+  labs(title = "Histogram of Percentage of African American Population", 
+       x = "Percentage of African American Population", y = "Count")
+
+ggplot(gavote, aes(x = perAA)) +
+  geom_density(fill = "lightblue", alpha = 0.6) +
+  labs(title = "Density Plot of Percentage of African American Population", 
+       x = "Percentage of African American Population", y = "Density")
+```
+
+```{r}
+hist(gavote$undercount, main="Distribution of Undercount", xlab="Undercount Proportion",
+     col="lightblue")
+
+plot(density(gavote$undercount))
+```
+
+
+```{r full model}
+full_model <- lm(undercount ~ ., data = gavote)
+summary(full_model)
+print(paste("AIC: ", AIC(full_model)))
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(full_model, which = 1, labels.id = FALSE)
+plot(full_model, which = 2, labels.id = FALSE)
+```
+
+
+```{r built-in step function model}
+backselect_builtin_model <- step(full_model, direction = "backward", trace = 0)
+summary(backselect_builtin_model)
+print(paste("AIC: ", AIC(backselect_builtin_model)))
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(backselect_builtin_model, which = 1, labels.id = FALSE)
+plot(backselect_builtin_model, which = 2, labels.id = FALSE)
+```
+
+
+```{r backselect.R model}
+# load backselect.R
+source("/Users/andy/Desktop/STT465/lecture code/backselect.R")
+
+# define variables
+y <- gavote$undercount
+X <- model.matrix(~ . - 1, data = gavote[, !(names(gavote) %in% "undercount")])
+
+# standardize y and X
+y_standardized <- scale(y)
+X_standardized <- scale(X)
+
+# perform backward selection
+vars <- bselect(y_standardized, X_standardized)
+
+# fit model
+bselect_model <- lm(y_standardized ~ -1 + X_standardized[, vars$remain])
+summary(bselect_model)
+print(paste("AIC: ", AIC(bselect_model)))
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(bselect_model, which = 1, labels.id = FALSE)
+plot(bselect_model, which = 2, labels.id = FALSE)
+```
+
+
+```{r Bayesian Model}
+source("/Users/andy/Desktop/STT465/lecture code/regression_gprior.R")
+
+# Standardize y and X (if required)
+y <- scale(gavote$undercount)
+X <- model.matrix(~ . - 1, data = gavote[, !(names(gavote) %in% "undercount")])
+X <- scale(X)  # Standardize continuous predictors
+X <- X[, vars$remain]
+
+# Initialize storage for MCMC samples
+S <- 10000
+BETA <- Z <- matrix(NA, S, ncol(X))  # For coefficients and variable inclusion
+z <- rep(1, ncol(X))  # Start with all variables included
+
+# Calculate initial likelihood
+lpy.c <- lpy.X(y, X[, z == 1, drop = FALSE])  # Compute likelihood with current variables
+
+for (s in 1:S) {
+  # Update inclusion indicators z
+  for (j in sample(1:ncol(X))) {
+    zp <- z
+    zp[j] <- 1 - zp[j]
+    lpy.p <- lpy.X(y, X[, zp == 1, drop = FALSE])  # Likelihood with new variable set
+    r <- (lpy.p - lpy.c) * (-1) ^ (zp[j] == 0)
+    z[j] <- rbinom(1, 1, 1 / (1 + exp(-r)))
+    if (z[j] == zp[j]) lpy.c <- lpy.p  # Update likelihood if z changes
+  }
+
+  # Sample regression coefficients and variance
+  beta <- z
+  if (sum(z) > 0) {
+    beta[z == 1] <- lm.gprior(y, X[, z == 1, drop = FALSE], S = 1)$beta
+  }
+
+  # Store samples
+  Z[s, ] <- z
+  BETA[s, ] <- beta
+}
+
+# Posterior summaries
+apply(BETA, 2, mean)  # Posterior means of coefficients
+apply(BETA, 2, quantile, probs = c(0.025, 0.975))  # 95% credible intervals
+```
+
+```{r}
+par(mfrow = c(2,2), mar=c(2,2,2,2))
+
+plot(1:S, BETA[,3],  xlab='', ylab='', main="Traceplot for Beta3")
+title(xlab = 'iteration', ylab = 'Beta3')
+
+plot(1:S, BETA[,4], xlab='', ylab='', main="Traceplot for Beta4")
+title(xlab = 'iteration', ylab = 'Beta4')
+
+plot(1:S, BETA[,5], xlab='', ylab='', main="Traceplot for Beta5")
+title(xlab = 'iteration', ylab = 'Beta5')
+
+plot(1:S, BETA[,6], xlab='', ylab='', main="Traceplot for Beta6")
+title(xlab = 'iteration', ylab = 'Beta6')
+```
+
+
+```{r}
+beta_3_acf <- acf(BETA[, 3], lag.max=40, plot=FALSE)
+beta_4_acf <- acf(BETA[, 4], lag.max=40, plot=FALSE)
+beta_5_acf <- acf(BETA[, 5], lag.max=40, plot=FALSE)
+beta_6_acf <- acf(BETA[, 6], lag.max=40, plot=FALSE)
+
+par(mfrow=c(2,2), mar=c(2,2,2,2))
+plot(1:40, beta_3_acf$acf[-1,,1], type='h', ylim=c(-1, 1), xlab='', ylab='', main='ACF for Beta3')
+plot(1:40, beta_4_acf$acf[-1,,1], type='h', ylim=c(-1, 1), xlab='', ylab='', main='ACF for Beta4')
+plot(1:40, beta_5_acf$acf[-1,,1], type='h', ylim=c(-1, 1), xlab='', ylab='', main='ACF for Beta5')
+plot(1:40, beta_6_acf$acf[-1,,1], type='h', ylim=c(-1, 1), xlab='', ylab='', main='ACF for Beta6')
+
+
+```
+
+```{r}
+X <- model.matrix(~ . - 1, data = gavote[, !(names(gavote) %in% "undercount")])
+X <- scale(X)
+X <- X[, vars$remain]
+
+selected_variables <- c(3,4,5,6)
+X_selected <- X[, selected_variables, drop = FALSE]
+
+bayesian_model <- lm(y ~ -1 + X_selected)
+summary(bayesian_model)
+print(paste("AIC: ", AIC(bayesian_model)))
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(bayesian_model, which = 1, labels.id = FALSE)
+plot(bayesian_model, which = 2, labels.id = FALSE)
+```
+
