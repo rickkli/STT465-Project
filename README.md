@@ -1,8 +1,8 @@
 # STT465-Project
 
 ## Project Overview:
-Objective: Predict undercount in voting data using regression models
-Data Source: gavote dataset in the R-package faraway
+- **Objective**: Predict undercount in voting data using regression models
+- **Data Source**: gavote dataset in the R-package faraway
 
 ## Methodology
 - **Frequentist Approach**: Utilized **step function regression models** to assess the relationship between explanatory variables and undercount.
